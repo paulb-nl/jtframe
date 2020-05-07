@@ -30,24 +30,27 @@ module jtframe_resync(
 );
 
 parameter CNTW = 10; // max 1024 pixels/lines
-parameter HLEN = 24; // length in pixels of the H pulse
-parameter VLEN = 3;  // video standard
 
-reg [CNTW-1:0]   hs_pos, vs_pos,   // relative positions of the original sync pulses
-                 hs_cnt, vs_cnt;   // count the position of the original sync pulses
+reg [CNTW-1:0]   hs_pos[2], vs_hpos[2], vs_vpos[2], // relative positions of the original sync pulses
+                 hs_len[2], vs_len[2],              // count the length of the original sync pulses
+                 hs_cnt, vs_cnt,                    // count the position of the original sync pulses
+                 hs_hold, vs_hold;
 reg              last_LHBL, last_LVBL, last_hsin, last_vsin;
-reg [HLEN-1:0]   hs_hold;
-reg [VLEN-1:0]   vs_hold;
-wire             hb_edge, hs_edge, vb_edge, vs_edge;
-reg [5:0]        hs_rst;
 
-(*keep*) wire [CNTW-1:0]  htrip = hs_pos + { {CNTW-4{hoffset[3]}}, hoffset[3:0]  };
-(*keep*) wire [CNTW-1:0]  vtrip = vs_pos + { {CNTW-4{voffset[3]}}, voffset[3:0]  };
+wire             hb_edge, hs_edge, hs_n_edge, vb_edge, vs_edge, vs_n_edge;
+reg              field;
+
+(*keep*) wire [CNTW-1:0]  hpos_off = { {CNTW-4{hoffset[3]}}, hoffset[3:0]  };
+(*keep*) wire [CNTW-1:0]  htrip = hs_pos[field] + hpos_off;
+(*keep*) wire [CNTW-1:0]  vs_htrip = vs_hpos[field] + hpos_off;
+(*keep*) wire [CNTW-1:0]  vs_vtrip = vs_vpos[field] + { {CNTW-4{voffset[3]}}, voffset[3:0]  };
 
 assign hb_edge = LHBL && !last_LHBL;
 assign hs_edge = hs_in && !last_hsin;
+assign hs_n_edge = !hs_in && last_hsin;
 assign vb_edge = LVBL && !last_LVBL;
 assign vs_edge = vs_in && !last_vsin;
+assign vs_n_edge = !vs_in && last_vsin;
 
 always @(posedge clk) if(pxl_cen) begin
     last_LHBL <= LHBL;
@@ -55,30 +58,42 @@ always @(posedge clk) if(pxl_cen) begin
     last_hsin <= hs_in;
     last_vsin <= vs_in;
 
-    hs_cnt <= hb_edge ? {CNTW{1'b0}} : hs_cnt+1;
-    if( vb_edge )
+    hs_cnt <= hb_edge ? {CNTW{1'b0}} : hs_cnt+1'b1;
+    if( vb_edge ) begin
         vs_cnt <= {CNTW{1'b0}};
-    else if(hb_edge) 
-        vs_cnt <= vs_cnt+1;
+        field <= ~field;
+    end else if(hb_edge)
+        vs_cnt <= vs_cnt+1'b1;
 
     // Horizontal
-    if( hs_edge ) hs_pos <= hs_cnt;
+    if( hs_edge ) hs_pos[field] <= hs_cnt;
+    if( hs_n_edge ) hs_len[field] <= hs_cnt - hs_pos[field];
+
     if( hs_cnt == htrip ) begin
         hs_out <= 1;
-        hs_hold <= {HLEN{1'b1}};
-        if( vs_cnt == vtrip ) begin
-            vs_hold <= {VLEN{1'b1}};
-            vs_out <= 1;
-        end else begin
-            vs_hold <= vs_hold>>1;
-            if( !vs_hold[0] ) vs_out <= 0;
-        end
+        hs_hold <= hs_len[field] - 1'b1;
     end else begin
-        hs_hold <= hs_hold>>1;
-        if( !hs_hold[0] ) hs_out <= 0;
+        if( |hs_hold ) hs_hold <= hs_hold - 1'b1;
+        if( hs_hold == 0 ) hs_out <= 0;
     end
 
-    if( vs_edge ) vs_pos <= vs_cnt;
+    // Vertical
+    if( vs_edge ) begin
+        vs_hpos[field] <= hs_cnt;
+        vs_vpos[field] <= vs_cnt;
+    end
+    if( vs_n_edge ) vs_len[field] <= vs_cnt - vs_vpos[field];
+
+    if( hs_cnt == vs_htrip ) begin
+        if( vs_cnt == vs_vtrip ) begin
+            vs_hold <= vs_len[field] - 1'b1;
+            vs_out <= 1;
+        end else begin
+            if( |vs_hold ) vs_hold <= vs_hold - 1'b1;
+            if( vs_hold == 0 ) vs_out <= 0;
+        end
+    end
+
 end
 
 `ifdef SIMULATION
