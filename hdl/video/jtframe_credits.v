@@ -424,8 +424,6 @@ always @(posedge clk) if(pxl_cen) begin
             end else rgb_out <= extend(obj_pxl); // OBJ
         end
     end
-
-    if( vb || hb ) rgb_out <= 0;
 end
 
 endmodule
